@@ -1,0 +1,36 @@
+{% extends "layout.html" %} {% block title %}So sánh thuật toán{% endblock %} {%
+block content %}
+<div class="container">
+  <div class="card mt-4">
+    <div class="card-header bg-primary text-white">
+      <h4 class="mb-0">So sánh các thuật toán Clustering</h4>
+    </div>
+    <div class="card-body">
+      <table class="table table-bordered table-hover">
+        <thead class="table-light">
+          <tr>
+            <th>Thuật toán</th>
+            <th>Số cụm</th>
+            <th>Số outlier</th>
+            <th>Inertia</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>DBSCAN</td>
+            <td>{{ dbscan_clusters }}</td>
+            <td>{{ dbscan_outliers }}</td>
+            <td>-</td>
+          </tr>
+          <tr>
+            <td>KMeans</td>
+            <td>{{ kmeans_clusters }}</td>
+            <td>0</td>
+            <td>{{ kmeans_inertia }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
