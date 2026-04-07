@@ -119,7 +119,6 @@ def run_analysis():
     fpgrowth_result = fpgrowth_pipeline(apriori_data)
 
     # KMeans
-# KMeans
     kmeans_result, kmeans_summary, kmeans_centers, kmeans_inertia = kmeans_pipeline(
         data,
         scaled_features
@@ -145,13 +144,17 @@ def fpgrowth_rules():
         by="lift",
         ascending=False
     ).head(5)
+    # Sắp xếp: Nếu có cột 'Class', gian lận lên đầu
+    fpgrowth_data = fpgrowth_result.copy()
+    if 'Class' in fpgrowth_data.columns:
+        fpgrowth_data = fpgrowth_data.sort_values(by="Class", ascending=False)
     return render_template(
         "rules.html",
         total_rules=total_rules,
         avg_support=avg_support,
         avg_confidence=avg_confidence,
         top_rules=top_rules.to_dict(orient="records"),
-        rules=fpgrowth_result.to_dict(orient="records"),
+        rules=fpgrowth_data.to_dict(orient="records"),
         method="FP-Growth"
     )
 
@@ -159,18 +162,50 @@ def fpgrowth_rules():
 # FP-GROWTH RULES PAGE
 # ==============================
 
+
 @app.route("/kmeans")
 def kmeans_page():
     global kmeans_result, kmeans_summary, kmeans_centers, kmeans_inertia
+    from flask import request
     if kmeans_result is None:
         return redirect(url_for("dashboard"))
-    preview = kmeans_result.head(100)
+
+    page = int(request.args.get("page", 1))
+    per_page = 50
+    selected_cluster = request.args.get("cluster", "all")
+    selected_class = request.args.get("class", "all")
+
+    df = kmeans_result.copy()
+    # Lọc theo cụm
+    if selected_cluster != "all":
+        try:
+            cluster_val = int(selected_cluster)
+            df = df[df["KMeans_Cluster"] == cluster_val]
+        except:
+            pass
+    # Lọc theo gian lận
+    if selected_class != "all":
+        if selected_class == "fraud":
+            df = df[df["Class"] == 1]
+        elif selected_class == "normal":
+            df = df[df["Class"] == 0]
+
+    # Sắp xếp gian lận lên đầu
+    df = df.sort_values(by="Class", ascending=False)
+
+    total_points = len(df)
+    total_pages = (total_points + per_page - 1) // per_page
+    start = (page - 1) * per_page
+    end = start + per_page
+    preview = df.iloc[start:end]
+
+    cluster_counts = kmeans_summary.to_dict()
+    cluster_list = sorted([int(c) for c in cluster_counts.keys()])
 
     # Vẽ và lưu biểu đồ KMeans (dùng lại plot_clusters, đổi tên cột cho phù hợp)
     kmeans_plot_path = None
     try:
         temp_data = kmeans_result.copy()
-        # Đổi tên cột KMeans_Cluster thành Cluster để dùng chung hàm plot_clusters
         if "KMeans_Cluster" in temp_data.columns:
             temp_data = temp_data.rename(columns={"KMeans_Cluster": "Cluster"})
         plot = plot_clusters(temp_data)
@@ -185,14 +220,19 @@ def kmeans_page():
 
     return render_template(
         "clustering_kmeans.html",
-        total_points=len(kmeans_result),
+        total_points=total_points,
         total_clusters=len(kmeans_summary),
         outliers=0,
-        cluster_counts=kmeans_summary.to_dict(),
+        cluster_counts=cluster_counts,
         clustered_data=preview.to_dict(orient="records"),
         cluster_plot=kmeans_plot_path,
         centers=kmeans_centers,
-        inertia=kmeans_inertia
+        inertia=kmeans_inertia,
+        page=page,
+        total_pages=total_pages,
+        selected_cluster=selected_cluster,
+        selected_class=selected_class,
+        cluster_list=cluster_list
     )
 
 
@@ -200,24 +240,68 @@ def kmeans_page():
 # CLUSTERING PAGE
 # ==============================
 
+
+from flask import request  # Đảm bảo đã import request
+
 @app.route("/clustering")
 def clustering():
-
+    global clustered_data
     if clustered_data is None:
         return redirect(url_for("dashboard"))
 
+    # Lấy các giá trị filter từ query string
+    page = int(request.args.get("page", 1))
+    per_page = 50
+    selected_cluster = request.args.get("cluster", "all")
+    selected_class = request.args.get("class", "all")
+
+    df = clustered_data.copy()
+    # Lọc theo cụm
+    if selected_cluster != "all":
+        try:
+            cluster_val = int(selected_cluster)
+            df = df[df["Cluster"] == cluster_val]
+        except:
+            if selected_cluster == "outlier":
+                df = df[df["Cluster"] == -1]
+    # Lọc theo gian lận
+    if selected_class != "all":
+        if selected_class == "fraud":
+            df = df[df["Class"] == 1]
+        elif selected_class == "normal":
+            df = df[df["Class"] == 0]
+
+    # Sắp xếp gian lận lên đầu
+    df = df.sort_values(by="Class", ascending=False)
+
+    total_points = len(df)
+    total_pages = (total_points + per_page - 1) // per_page
+    start = (page - 1) * per_page
+    end = start + per_page
+    preview = df.iloc[start:end]
+
     cluster_counts = clustered_data["Cluster"].value_counts().to_dict()
-
-    total_points = len(clustered_data)
-
-    total_clusters = len([
-        c for c in cluster_counts.keys()
-        if c != -1
-    ])
-
+    total_clusters = len([c for c in cluster_counts.keys() if c != -1])
     outlier_count = cluster_counts.get(-1, 0)
 
-    preview = clustered_data.head(100)
+    # Lấy danh sách các cụm cho dropdown
+    cluster_list = sorted([c for c in cluster_counts.keys() if c != -1])
+    if outlier_count > 0:
+        cluster_list.append("outlier")
+
+    # Vẽ và lưu biểu đồ DBSCAN
+    dbscan_plot_path = None
+    try:
+        temp_data = clustered_data.copy()
+        plot = plot_clusters(temp_data)
+        if plot:
+            filename = f"dbscan_{uuid.uuid4().hex}.png"
+            save_path = os.path.join("static", "plots", filename)
+            plot.savefig(save_path, bbox_inches="tight")
+            plot.close()
+            dbscan_plot_path = url_for("static", filename=f"plots/{filename}")
+    except Exception as e:
+        dbscan_plot_path = None
 
     return render_template(
         "clustering.html",
@@ -226,7 +310,12 @@ def clustering():
         outliers=outlier_count,
         cluster_counts=cluster_counts,
         clustered_data=preview.to_dict(orient="records"),
-        cluster_plot=None
+        cluster_plot=dbscan_plot_path,
+        page=page,
+        total_pages=total_pages,
+        selected_cluster=selected_cluster,
+        selected_class=selected_class,
+        cluster_list=cluster_list
     )
 
 
@@ -247,13 +336,17 @@ def rules():
         ascending=False
     ).head(5)
 
+    # Sắp xếp: Nếu có cột 'Class', gian lận lên đầu
+    rules_data = rules_result.copy()
+    if 'Class' in rules_data.columns:
+        rules_data = rules_data.sort_values(by="Class", ascending=False)
     return render_template(
         "rules.html",
         total_rules=total_rules,
         avg_support=avg_support,
         avg_confidence=avg_confidence,
         top_rules=top_rules.to_dict(orient="records"),
-        rules=rules_result.to_dict(orient="records")
+        rules=rules_data.to_dict(orient="records")
     )
 
     return render_template(
